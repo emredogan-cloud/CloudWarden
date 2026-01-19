@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Smart Janitor - Automated EC2 Cost Optimization Bot
+
+Parameters:
+  TargetTagKey:
+    Type: String
+    Default: Env
+    Description: target server ticket key (örn: Env)
+  TargetTagValue:
+    Type: String
+    Default: Dev
+    Description: target server ticket value (örn: Dev)
+  SlackWebhookUrl:
+    Type: String
+    Description: Slack Webhook address (https://hooks.slack.com/...)
+    NoEcho: true  
+
+Globals:
+  Function:
+    Timeout: 20
+    MemorySize: 128
+
+Resources:
+  JanitorAuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: JanitorAuditLogs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: InstanceId
+          AttributeType: S
+        - AttributeName: ActionTime
+          AttributeType: S
+      KeySchema:
+        - AttributeName: InstanceId
+          KeyType: HASH
+        - AttributeName: ActionTime
+          KeyType: RANGE
+
+  IntelligentOptimizationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      
+      Environment:
+        Variables:
+          TARGET_TAG_KEY: !Ref TargetTagKey
+          TARGET_TAG_VALUE: !Ref TargetTagValue
+          DYNAMO_TABLE: !Ref JanitorAuditTable
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl 
+      
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - cloudwatch:GetMetricStatistics
+                - ec2:StopInstances
+                - dynamodb:PutItem
+              Resource: '*'
+      
+      Events:
+        CheckSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 * * * ? *)
