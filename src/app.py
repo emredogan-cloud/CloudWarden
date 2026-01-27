@@ -1,20 +1,22 @@
-import boto3
+from utils.logging import get_logger
+from utils.session import AWSSessionManager
 from botocore.exceptions import ClientError
-import logging
 from datetime import datetime, timedelta, timezone
 import os
 import urllib3
 import json
+from typing import List,Dict
+from mypy_boto3_ec2.type_defs import FilterTypeDef
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+
+manager = AWSSessionManager.get_instance()
+logger = get_logger('Warden' , 'DEBUG')
+
 
 def lambda_handler(event, context):
-    ec2 = boto3.client('ec2')
-    cloudwatch = boto3.client('cloudwatch')
-    dynamodb = boto3.client('dynamodb')
+    ec2 = manager.get_client('ec2')
+    cloudwatch = manager.get_client('cloudwatch')
+    dynamodb = manager.get_client('dynamodb')
 
     tag_key = os.environ.get('TARGET_TAG_KEY', 'Env')
     tag_value = os.environ.get('TARGET_TAG_VALUE', 'Dev')
@@ -22,7 +24,7 @@ def lambda_handler(event, context):
     if not table_name:
         raise RuntimeError('table_name is not set')
 
-    logging.info(f'Bot is Starting... Targets: {tag_key} : {tag_value}')
+    logger.info(f'Bot is Starting... Targets: {tag_key} : {tag_value}')
 
     instance_count = 0
     checked_instance_ids = []
@@ -47,12 +49,12 @@ def lambda_handler(event, context):
         except ClientError as e:
             error = e.response['Error']['Code']
             messages = e.response['Error']['Message']
-            logging.warning(f'ERROR: {error} | {messages}')
+            logger.warning(f'ERROR: {error} | {messages}')
 
     try:
         paginator = ec2.get_paginator('describe_instances')
 
-        filters = [
+        filters : List[FilterTypeDef] = [
             {'Name': f'tag:{tag_key}', 'Values': [tag_value]},
             {'Name': 'instance-state-name', 'Values': ['running']}
         ]
@@ -66,7 +68,7 @@ def lambda_handler(event, context):
                     instance_id = instance['InstanceId']
                     checked_instance_ids.append(instance_id)
 
-                    logging.info(f'InstanceId : {instance_id}')
+                    logger.info(f'InstanceId : {instance_id}')
 
                     end_time = datetime.now(timezone.utc)
                     start_time = end_time - timedelta(hours=1)
@@ -85,33 +87,35 @@ def lambda_handler(event, context):
                     datapoints = response.get('Datapoints', [])
 
                     if not datapoints:
-                        logging.warning(f"InstanceID : {instance_id} No Data Found")
+                        logger.warning(f"InstanceID : {instance_id} No Data Found")
                         continue
 
                     datapoints.sort(key=lambda x: x['Timestamp'])
                     latest = datapoints[-1]
 
-                    logging.info(f'Last datapoint (1-hours avg) CPU {latest["Average"]:.2f}%')
+                    logger.info(f"Last datapoint (1-hours avg) CPU {latest["Average"]:.2f}%")
 
                     if latest['Average'] < 10.00:
-                        logging.warning(f'InstanceID : {instance_id} CPU Usage is Very low : {latest["Average"]:.2f}%')
-                        logging.info(f'Server is Stopping... ID: {instance_id}')
+                        logger.warning(f"InstanceID : {instance_id} CPU Usage is Very low : {latest["Average"]:.2f}%")
+                        send_slack_alert(f'InstanceId: {instance_id} CPU usage {latest['Average']:.2f} IS Very Low "{instance_id} SERVER İS STOPPİNG!!!". ')
+                        logger.info(f'Server is Stopping... ID: {instance_id}')
                         ec2.stop_instances(InstanceIds=[instance_id])
                         dynamodb.put_item(
                             TableName=table_name,
                             Item={
                                 'InstanceId':{'S': instance_id},
-                                'ActionTime':{'S': str(datetime.now())},
+                                'ActionTime':{'S': str(timezone.utc)},
                                 'ActionType':{'S': 'AUTO_STOP'},
                                 'Reason':{'S':f'CPU is Low {latest["Average"]}%'}
                             }
                         )
-                        logging.info('The data is being written to the table.')
+                        CPU_value = latest['Average']
+                        logger.info('The data is being written to the table.')
                     elif latest['Average'] > 80.00:
-                        logging.warning(f'InstanceID : {instance_id} CPU Usage is Very HIGH : {latest["Average"]:.2f}%')
+                        logger.warning(f"InstanceID : {instance_id} CPU Usage is Very HIGH : {CPU_value}%")
                         send_slack_alert(f'InstanceId: {instance_id} CPU USAGE: {latest["Average"]} is Very HİGH!!! Please Checked')
                     else:
-                        logging.info(f'InstanceID : {instance_id} CPU Usage is Normal : {latest["Average"]:.2f}%')
+                        logger.info(f'InstanceID : {instance_id} CPU Usage is Normal : {CPU_value}%')
 
         return {
             "status": "success",
@@ -122,7 +126,7 @@ def lambda_handler(event, context):
     except ClientError as e:
         error = e.response['Error']['Code']
         message = e.response['Error']['Message']
-        logging.error(f'AWS ERROR | {error} | {message}')
+        logger.error(f'AWS ERROR | {error} | {message}')
 
         return {
             "status": "error",
