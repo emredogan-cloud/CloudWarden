@@ -1,4 +1,9 @@
-#  AWS Smart Janitor (FinOps Automation)
+#  AWS CloudWarden(FinOps Automation)
+
+## Architecture Diagram
+
+![Architecture](docs/CloudWarden.png)
+
 
 ![AWS](https://img.shields.io/badge/AWS-Serverless-orange) ![Python](https://img.shields.io/badge/Python-3.12-blue) ![DynamoDB](https://img.shields.io/badge/Database-DynamoDB-blue)
 
