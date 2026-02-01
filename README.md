@@ -2,7 +2,17 @@
 
 ![AWS](https://img.shields.io/badge/AWS-Serverless-orange) ![Python](https://img.shields.io/badge/Python-3.12-blue) ![DynamoDB](https://img.shields.io/badge/Database-DynamoDB-blue)
 
-**Smart Janitor** is an event-driven serverless bot designed to optimize AWS EC2 costs. Instead of blindly stopping servers based on time, it analyzes **Real-Time CPU Metrics** to make intelligent decisions.
+*CloudWarden 🛡️
+
+A lightweight, serverless automation tool designed to slash AWS costs and monitor performance. CloudWarden autonomously scans your EC2 instances, analyzes CPU utilization, and takes decisive action:
+
+    💰 Cost Saver: Automatically stops instances with <10% CPU usage (with Slack notification).
+
+    🚨 Performance Alert: Instantly pings developers via Slack if CPU spikes >80%.
+
+    ⚙️ Zero Maintenance: Fully automated via EventBridge Scheduler (runs every 2 days).
+
+Built with: Python/Boto3, AWS Lambda, EventBridge, Slack API.
 
 ##  Key Features
 
