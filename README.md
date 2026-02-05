@@ -1,8 +1,8 @@
 #  AWS CloudWarden(FinOps Automation)
 
-## Architecture Diagram
+[![CloudWarden CI](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml/badge.svg)](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml)
 
-![CI Status](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/ci.yml/badge.svg)
+## Architecture Diagram
 
 ![Architecture](docs/CloudWarden.png)
 
