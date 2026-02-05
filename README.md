@@ -2,6 +2,8 @@
 
 ## Architecture Diagram
 
+![CI Status](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/ci.yml/badge.svg)
+
 ![Architecture](docs/CloudWarden.png)
 
 
