@@ -1,83 +1,120 @@
-#  AWS CloudWarden(FinOps Automation)
+# CloudWarden
 
-[![CloudWarden CI](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml/badge.svg)](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml)
+[![CI](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml/badge.svg)](https://github.com/emredogan-cloud/CloudWarden/actions/workflows/main.yaml)
 
-## Architecture Diagram
+CPU-aware autonomous shutdown bot for EC2: scans tagged instances on a schedule, pulls the last-hour `CPUUtilization` average from CloudWatch, and decides — **stop the instance, alert the channel, or leave it alone** — based on configurable thresholds. Every action is recorded in DynamoDB for audit.
 
-![Architecture](docs/CloudWarden.png)
+Deployed as a single AWS SAM stack: Lambda + EventBridge Scheduler + DynamoDB + Slack webhook.
 
+<img src="docs/CloudWarden.png" alt="CloudWarden architecture" width="640" />
 
-![AWS](https://img.shields.io/badge/AWS-Serverless-orange) ![Python](https://img.shields.io/badge/Python-3.12-blue) ![DynamoDB](https://img.shields.io/badge/Database-DynamoDB-blue)
+```mermaid
+flowchart LR
+    EB[EventBridge\nScheduler · cron] --> L[Lambda\nIntelligentOptimizationFunction]
+    L -- describe_instances\ntag filter + state=running --> EC2[(EC2)]
+    L -- GetMetricStatistics · CPU 1h avg --> CW[(CloudWatch)]
+    L -- if CPU < threshold --> STOP[stop_instances]
+    L -- audit log --> DDB[(DynamoDB · JanitorAuditLogs)]
+    L -- alert --> SLACK((Slack webhook))
+    STOP --> EC2
+```
 
-*CloudWarden 🛡️
+---
 
-A lightweight, serverless automation tool designed to slash AWS costs and monitor performance. CloudWarden autonomously scans your EC2 instances, analyzes CPU utilization, and takes decisive action:
+## Decision logic
 
-    💰 Cost Saver: Automatically stops instances with <10% CPU usage (with Slack notification).
+For each running, tag-matched instance:
 
-    🚨 Performance Alert: Instantly pings developers via Slack if CPU spikes >80%.
+| Last-hour CPU avg | Action |
+|---|---|
+| `< 10 %` | `StopInstances` · audit `AUTO_STOP` in DynamoDB · Slack notice |
+| `> 80 %` | Slack overload alert · no instance change |
+| otherwise | Log only — instance is healthy |
 
-    ⚙️ Zero Maintenance: Fully automated via EventBridge Scheduler (runs every 2 days).
+The thresholds live in `src/app.py`. The "low" branch performs the only mutating API call in the stack.
 
-Built with: Python/Boto3, AWS Lambda, EventBridge, Slack API.
+---
 
-##  Key Features
+## Stack
 
-* ** Intelligent Analysis:** Checks CloudWatch metrics (CPU Utilization) before taking action.
-* ** Cost Saving:** Automatically stops instances if CPU < 2.5% (Idle).
-* ** Safety First:** Never interrupts active servers (> 2.5% CPU).
-* ** Smart Alerts:** Sends Slack notifications if a server is overloaded (> 80% CPU).
-* ** Audit Logging:** Records every action to **Amazon DynamoDB** for compliance.
-* ** Tag-Based:** Only targets instances with specific tags (e.g., `Env:Dev`).
+| Component | Detail |
+|---|---|
+| Runtime | Python 3.12, 128 MB, 20 s timeout |
+| Schedule | `cron(0 0 0 */2 * ? *)` — every two days (configurable) |
+| Filter | `tag:Env=Dev` (parametrized via `TargetTagKey` / `TargetTagValue`) + `instance-state-name=running` |
+| Audit | `JanitorAuditLogs` DynamoDB table (`InstanceId` PK · `ActionTime` SK, PAY_PER_REQUEST) |
+| Notification | Slack webhook (`SlackWebhookUrl` parameter, `NoEcho: true`) |
+| IaC | AWS SAM (`AWS::Serverless::Function`) |
 
-##  Architecture
+---
 
-1.  **Amazon EventBridge:** Triggers the Lambda function every hour.
-2.  **AWS Lambda (Python):**
-    * Scans EC2 instances using `boto3` paginators.
-    * Fetches CPU metrics from **Amazon CloudWatch**.
-3.  **Decision Engine:**
-    * *Is CPU < 10%?* -> **STOP Instance** & Write to **DynamoDB**.
-    * *Is CPU > 80%?* -> Send Alert to **Slack**.
-4.  **Amazon DynamoDB:** Stores audit logs (Who, When, Why).
+## Repository Layout
 
-##  Installation & Deploy
+```
+CloudWarden/
+├── template.yaml            # SAM stack: Lambda + DDB + Schedule
+├── src/
+│   └── app.py               # lambda_handler — CPU analysis + decisions
+├── utils/
+│   ├── session.py           # boto3 session singleton
+│   └── logging.py
+├── requirements.txt
+└── LICENSE
+```
 
-This project is built using **AWS SAM (Serverless Application Model)**.
+---
 
-### Prerequisites
-* AWS CLI & SAM CLI
-* Python 3.12
-* A Slack Webhook URL
+## Deploy
 
-### Deploy
+Prerequisites: AWS CLI, [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Python 3.12.
+
 ```bash
-# 1. Build the project
 sam build
-
-# 2. Deploy to AWS (Follow the prompts)
 sam deploy --guided
+```
 
-During deployment, you will be asked for:
+Parameters prompted:
 
-  -  TargetTagKey: (Default: Env)
+- **TargetTagKey** — default `Env`
+- **TargetTagValue** — default `Dev`
+- **SlackWebhookUrl** — `https://hooks.slack.com/...` (stored encrypted via `NoEcho`)
 
-  -  TargetTagValue: (Default: Dev)
+### Update
 
-  -  SlackWebhookUrl: Paste your Slack Webhook URL here.
+```bash
+sam build && sam deploy
+```
 
-Tech Stack
+### Tear down
 
-   -  Compute: AWS Lambda
+```bash
+sam delete --stack-name <stack-name>
+```
 
-   - Database: Amazon DynamoDB
+---
 
-   - Monitoring: Amazon CloudWatch
+## Required IAM
 
-   - IaC: AWS SAM (CloudFormation)
+The function role (assembled by SAM) holds:
 
-   - Language: Python 3.12 (Boto3, Urllib3)
+- `AWSLambdaBasicExecutionRole`
+- `ec2:DescribeInstances`, `ec2:StopInstances`
+- `cloudwatch:GetMetricStatistics`
+- `dynamodb:PutItem`
 
--LICENCE
+All scoped to `Resource: '*'` in the template; a production hardening pass should constrain `StopInstances` to a `Condition` clause that enforces `aws:ResourceTag/Env=Dev`.
 
-MIT LICENSE
+---
+
+## Operational Notes
+
+- **`Resource: '*'` on `StopInstances` is intentional in the demo.** In production, replace with a tag-condition policy.
+- **CloudWatch needs detailed monitoring or a full hour of data.** Instances younger than the metric window get a `No Data Found` log line and are skipped — safe by default.
+- **Slack rate limits.** Every alert is a single POST; no batching is needed at the scales this script targets.
+- **DynamoDB is the audit trail.** The table is the system of record for "what did the bot do, and why" — preserved beyond Lambda log retention.
+
+---
+
+## License
+
+[MIT](LICENSE)
